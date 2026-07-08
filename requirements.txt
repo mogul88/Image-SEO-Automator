@@ -1,6 +1,6 @@
-streamlit
-pillow
-python-slugify
-google-genai
-request
-openai
+streamlit>=1.46.0
+Pillow>=11.0.0
+python-slugify>=8.0.4
+google-genai>=1.27.0
+requests>=2.32.3
+openai>=1.95.0
