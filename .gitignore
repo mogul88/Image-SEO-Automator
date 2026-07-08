@@ -1,0 +1,14 @@
+.streamlit/secrets.toml
+
+build/
+dist/
+output/
+metadata/
+
+__pycache__/
+*.pyc
+
+.env
+.env.*
+
+.vscode/

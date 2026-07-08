@@ -1,0 +1,6 @@
+streamlit
+pillow
+python-slugify
+google-genai
+request
+openai
