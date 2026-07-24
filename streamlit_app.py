@@ -1,14 +1,17 @@
-import streamlit as st
-from pathlib import Path
-import tempfile
-import zipfile
 import csv
 import io
+import json
+import tempfile
 import time
+import zipfile
+from pathlib import Path
+
+import streamlit as st
+import streamlit.components.v1 as components
 
 from ai_analyzer import analyze_images_batch
-from seo import make_seo_filename
 from converter import convert_image
+from seo import make_seo_filename
 from wordpress_uploader import upload_to_wordpress
 
 
@@ -26,7 +29,8 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-st.markdown("""
+st.markdown(
+    """
 <style>
 .stApp {
     background: #f6f8fb;
@@ -129,7 +133,9 @@ input, textarea {
     color: #0f172a !important;
 }
 </style>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
 
 with st.sidebar:
@@ -165,8 +171,14 @@ with st.sidebar:
     st.divider()
 
     st.markdown("## 🌍 WordPress")
-    wp_site_url = st.text_input("WordPress URL", value=safe_secret("WP_SITE_URL", ""))
-    wp_username = st.text_input("Username", value=safe_secret("WP_USERNAME", ""))
+    wp_site_url = st.text_input(
+        "WordPress URL",
+        value=safe_secret("WP_SITE_URL", ""),
+    )
+    wp_username = st.text_input(
+        "Username",
+        value=safe_secret("WP_USERNAME", ""),
+    )
     wp_app_password = st.text_input(
         "Application Password",
         type="password",
@@ -176,15 +188,19 @@ with st.sidebar:
     st.caption("Dry Run ON = WordPress upload skip.")
 
 
-st.markdown("""
+st.markdown(
+    """
 <div class="hero">
   <span class="badge">AI Image SEO Suite</span>
   <h1>Image SEO Automator Pro</h1>
   <p>Gemini first, OpenRouter backup, smart filenames, alt text, title, caption, description, WebP compression, ZIP export, and optional WordPress upload.</p>
 </div>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
 s1, s2, s3, s4 = st.columns(4)
+
 s1.markdown(
     f'<div class="stat"><div class="stat-label">Mode</div><div class="stat-value">{"Dry Run" if dry_run else "Live Upload"}</div></div>',
     unsafe_allow_html=True,
@@ -208,6 +224,7 @@ left, right = st.columns([1.2, 0.8], gap="large")
 
 with left:
     st.subheader("📤 Upload Images")
+
     uploaded_files = st.file_uploader(
         "Upload JPG, PNG, WEBP images",
         type=["jpg", "jpeg", "png", "webp"],
@@ -215,14 +232,17 @@ with left:
     )
 
     st.subheader("🎯 SEO Inputs")
+
     website_url = st.text_input(
         "Website URL Optional",
         placeholder="https://yourwebsite.com/page-url",
     )
+
     primary_keyword = st.text_input(
         "Primary Keyword",
         placeholder="Example: 8/12 Roof Pitch",
     )
+
     secondary_keywords = st.text_area(
         "Secondary Keywords Optional / Manual Backup Topics",
         placeholder="angle diagram\nroof slope chart\nrafter length\ncost calculator",
@@ -238,17 +258,33 @@ with right:
     st.write("• Metadata CSV")
     st.write("• ZIP package")
 
-    st.info("Best test: 1 image + Dry Run ON + Gemini key. If Gemini busy, OpenRouter backup will run.")
+    st.info(
+        "Best test: 1 image + Dry Run ON + Gemini key. "
+        "If Gemini busy, OpenRouter backup will run."
+    )
+
 
 if uploaded_files:
     st.markdown("## 🖼️ Preview Gallery")
     cols = st.columns(5)
+
     for i, file in enumerate(uploaded_files):
         with cols[i % 5]:
-            st.image(file, caption=file.name, use_container_width=True)
+            st.image(
+                file,
+                caption=file.name,
+                use_container_width=True,
+            )
+
 
 st.markdown("---")
-start = st.button("🚀 Start Conversion", type="primary", use_container_width=True)
+
+start = st.button(
+    "🚀 Start Conversion",
+    type="primary",
+    use_container_width=True,
+)
+
 
 if start:
     if not uploaded_files:
@@ -260,7 +296,9 @@ if start:
         st.stop()
 
     if not gemini_api_key.strip() and not openrouter_api_key.strip():
-        st.error("Gemini ya OpenRouter mein se kam az kam ek API key required hai.")
+        st.error(
+            "Gemini ya OpenRouter mein se kam az kam ek API key required hai."
+        )
         st.stop()
 
     progress = st.progress(0)
@@ -268,8 +306,8 @@ if start:
     log_box = st.empty()
     logs = []
 
-    def log(msg):
-        logs.append(msg)
+    def log(message):
+        logs.append(message)
         log_box.code("\n".join(logs))
 
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -285,9 +323,9 @@ if start:
         image_paths = []
 
         for file in uploaded_files:
-            img_path = input_dir / file.name
-            img_path.write_bytes(file.getvalue())
-            image_paths.append(img_path)
+            image_path = input_dir / file.name
+            image_path.write_bytes(file.getvalue())
+            image_paths.append(image_path)
 
         log(f"Found {len(image_paths)} image(s)")
         log("AI metadata analysis started...")
@@ -302,7 +340,8 @@ if start:
                 openrouter_api_key,
                 openrouter_model,
             )
-        except Exception as e:
+
+        except Exception as error:
             manual_topics = [
                 line.strip()
                 for line in secondary_keywords.splitlines()
@@ -310,21 +349,33 @@ if start:
             ]
 
             if len(manual_topics) >= len(image_paths):
-                st.warning("AI failed. Manual backup topics se metadata ban raha hai.")
+                st.warning(
+                    "AI failed. Manual backup topics se metadata ban raha hai."
+                )
+
                 ai_results = []
 
-                for i, topic in enumerate(manual_topics[:len(image_paths)]):
-                    ai_results.append({
-                        "filename_topic": topic,
-                        "alt": f"{primary_keyword} {topic}"[:120],
-                        "title": f"{primary_keyword} {topic}".title(),
-                        "caption": f"{primary_keyword} {topic} visual reference.",
-                        "description": f"This image shows {primary_keyword} related to {topic}.",
-                    })
+                for topic in manual_topics[:len(image_paths)]:
+                    ai_results.append(
+                        {
+                            "filename_topic": topic,
+                            "alt": f"{primary_keyword} {topic}"[:120],
+                            "title": f"{primary_keyword} {topic}".title(),
+                            "caption": (
+                                f"{primary_keyword} {topic} visual reference."
+                            ),
+                            "description": (
+                                f"This image shows {primary_keyword} "
+                                f"related to {topic}."
+                            ),
+                        }
+                    )
             else:
-                st.error(f"AI failed: {e}")
+                st.error(f"AI failed: {error}")
                 st.info(
-                    f"Manual backup ke liye har image ka 1 topic do. Images: {len(image_paths)} | Topics: {len(manual_topics)}"
+                    "Manual backup ke liye har image ka 1 topic do. "
+                    f"Images: {len(image_paths)} | "
+                    f"Topics: {len(manual_topics)}"
                 )
                 st.stop()
 
@@ -339,6 +390,7 @@ if start:
         seo.OUTPUT_FOLDER = output_dir
 
         rows = []
+        uploaded_urls = []
         used_names = set()
         start_time = time.time()
 
@@ -347,13 +399,29 @@ if start:
             topic = ai_meta.get("filename_topic") or f"topic-{index + 1}"
 
             meta = {
-                "alt": ai_meta.get("alt") or f"{primary_keyword} {topic}",
-                "title": ai_meta.get("title") or f"{primary_keyword} {topic}".title(),
-                "caption": ai_meta.get("caption") or f"{primary_keyword} {topic} visual reference.",
-                "description": ai_meta.get("description") or f"Image showing {primary_keyword} {topic}.",
+                "alt": (
+                    ai_meta.get("alt")
+                    or f"{primary_keyword} {topic}"
+                ),
+                "title": (
+                    ai_meta.get("title")
+                    or f"{primary_keyword} {topic}".title()
+                ),
+                "caption": (
+                    ai_meta.get("caption")
+                    or f"{primary_keyword} {topic} visual reference."
+                ),
+                "description": (
+                    ai_meta.get("description")
+                    or f"Image showing {primary_keyword} {topic}."
+                ),
             }
 
-            output_name = make_seo_filename(primary_keyword, topic, used_names)
+            output_name = make_seo_filename(
+                primary_keyword,
+                topic,
+                used_names,
+            )
 
             output_name, size_kb, quality, dimensions = convert_image(
                 image_path,
@@ -364,8 +432,14 @@ if start:
             output_file = output_dir / output_name
             wp_url = ""
 
-            if not dry_run and wp_site_url and wp_username and wp_app_password:
+            if (
+                not dry_run
+                and wp_site_url
+                and wp_username
+                and wp_app_password
+            ):
                 log(f"Uploading to WordPress: {output_name}")
+
                 _, wp_url = upload_to_wordpress(
                     wp_site_url,
                     wp_username,
@@ -373,18 +447,25 @@ if start:
                     output_file,
                     meta,
                 )
+
+                if wp_url:
+                    uploaded_urls.append(wp_url)
+
                 log(f"Uploaded: {wp_url}")
+
             else:
                 log(f"Dry Run / Local Export: {output_name}")
 
-            rows.append({
-                "filename": output_name,
-                "alt": meta["alt"],
-                "title": meta["title"],
-                "caption": meta["caption"],
-                "description": meta["description"],
-                "wordpress_url": wp_url,
-            })
+            rows.append(
+                {
+                    "filename": output_name,
+                    "alt": meta["alt"],
+                    "title": meta["title"],
+                    "caption": meta["caption"],
+                    "description": meta["description"],
+                    "wordpress_url": wp_url,
+                }
+            )
 
             done = index + 1
             percent = done / len(image_paths)
@@ -393,26 +474,66 @@ if start:
             eta = int((elapsed / done) * remaining)
 
             progress.progress(percent)
+
             status.success(
-                f"Progress: {int(percent * 100)}% | Done: {done}/{len(image_paths)} | ETA: {eta}s"
+                f"Progress: {int(percent * 100)}% | "
+                f"Done: {done}/{len(image_paths)} | "
+                f"ETA: {eta}s"
             )
 
-            log(f"Converted: {output_name} | {size_kb:.1f} KB | Quality {quality}")
+            log(
+                f"Converted: {output_name} | "
+                f"{size_kb:.1f} KB | "
+                f"Quality {quality}"
+            )
 
         csv_path = metadata_dir / "metadata.csv"
 
-        with open(csv_path, "w", newline="", encoding="utf-8") as f:
-            fieldnames = ["filename", "alt", "title", "caption", "description", "wordpress_url"]
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
+        with open(
+            csv_path,
+            "w",
+            newline="",
+            encoding="utf-8",
+        ) as csv_file:
+            fieldnames = [
+                "filename",
+                "alt",
+                "title",
+                "caption",
+                "description",
+                "wordpress_url",
+            ]
+
+            writer = csv.DictWriter(
+                csv_file,
+                fieldnames=fieldnames,
+            )
             writer.writeheader()
             writer.writerows(rows)
 
         zip_buffer = io.BytesIO()
 
-        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zipf:
-            for img_file in output_dir.glob("*.webp"):
-                zipf.write(img_file, arcname=f"images/{img_file.name}")
-            zipf.write(csv_path, arcname="metadata.csv")
+        with zipfile.ZipFile(
+            zip_buffer,
+            "w",
+            zipfile.ZIP_DEFLATED,
+        ) as zip_file:
+            for image_file in output_dir.glob("*.webp"):
+                zip_file.write(
+                    image_file,
+                    arcname=f"images/{image_file.name}",
+                )
+
+            zip_file.write(
+                csv_path,
+                arcname="metadata.csv",
+            )
+
+            if uploaded_urls:
+                zip_file.writestr(
+                    "wordpress-image-urls.txt",
+                    "\n".join(uploaded_urls),
+                )
 
         zip_buffer.seek(0)
 
@@ -421,10 +542,136 @@ if start:
         st.download_button(
             label="⬇️ Download ZIP Package",
             data=zip_buffer,
-            file_name=f"{primary_keyword.lower().replace(' ', '-')}-image-seo-package.zip",
+            file_name=(
+                f"{primary_keyword.lower().replace(' ', '-')}"
+                "-image-seo-package.zip"
+            ),
             mime="application/zip",
             use_container_width=True,
         )
 
+        if uploaded_urls:
+            st.markdown("## 🔗 WordPress Image URLs")
+            st.success(
+                f"✅ {len(uploaded_urls)} uploaded image URL(s) ready to copy."
+            )
+
+            all_urls_text = "\n".join(uploaded_urls)
+
+            st.text_area(
+                "All uploaded image URLs — one URL per line",
+                value=all_urls_text,
+                height=min(350, 90 + len(uploaded_urls) * 34),
+            )
+
+            st.code(all_urls_text, language=None)
+
+            safe_urls_json = json.dumps(all_urls_text)
+
+            components.html(
+                f"""
+                <div style="font-family:Arial,sans-serif;width:100%;padding:0;margin:0;">
+                    <button
+                        id="copyAllWordPressUrls"
+                        style="
+                            width:100%;
+                            min-height:52px;
+                            border:none;
+                            border-radius:14px;
+                            background:linear-gradient(90deg,#16a34a,#22c55e);
+                            color:#ffffff;
+                            font-size:16px;
+                            font-weight:800;
+                            cursor:pointer;
+                            box-shadow:0 10px 24px rgba(22,163,74,.20);
+                        "
+                    >
+                        📋 Copy All WordPress Image URLs
+                    </button>
+
+                    <div
+                        id="copyUrlsStatus"
+                        style="
+                            min-height:24px;
+                            margin-top:9px;
+                            color:#166534;
+                            font-size:14px;
+                            font-weight:700;
+                            text-align:center;
+                        "
+                    ></div>
+
+                    <textarea
+                        id="urlCopyFallback"
+                        style="position:fixed;left:-99999px;top:-99999px;"
+                    ></textarea>
+                </div>
+
+                <script>
+                    const urls = {safe_urls_json};
+                    const button = document.getElementById("copyAllWordPressUrls");
+                    const status = document.getElementById("copyUrlsStatus");
+                    const fallback = document.getElementById("urlCopyFallback");
+
+                    async function copyUrls() {{
+                        let copied = false;
+
+                        try {{
+                            if (navigator.clipboard && window.isSecureContext) {{
+                                await navigator.clipboard.writeText(urls);
+                                copied = true;
+                            }}
+                        }} catch (error) {{
+                            copied = false;
+                        }}
+
+                        if (!copied) {{
+                            try {{
+                                fallback.value = urls;
+                                fallback.focus();
+                                fallback.select();
+                                fallback.setSelectionRange(0, fallback.value.length);
+                                copied = document.execCommand("copy");
+                            }} catch (error) {{
+                                copied = false;
+                            }}
+                        }}
+
+                        if (copied) {{
+                            button.innerText = "✅ All URLs Copied";
+                            status.innerText = "All WordPress image URLs are now in your clipboard.";
+                        }} else {{
+                            button.innerText = "⚠️ Use the copy icon above";
+                            status.innerText = "Browser blocked direct clipboard access. Tap the copy icon in the URL box above.";
+                        }}
+
+                        setTimeout(() => {{
+                            button.innerText = "📋 Copy All WordPress Image URLs";
+                            status.innerText = "";
+                        }}, 3500);
+                    }}
+
+                    button.addEventListener("click", copyUrls);
+                </script>
+                """,
+                height=100,
+            )
+
+            st.download_button(
+                label="⬇️ Download WordPress URLs as TXT",
+                data=all_urls_text,
+                file_name="wordpress-image-urls.txt",
+                mime="text/plain",
+                use_container_width=True,
+            )
+
+        elif not dry_run:
+            st.warning(
+                "WordPress live mode tha, lekin koi uploaded URL return nahi hua."
+            )
+
         st.markdown("## 📋 Metadata Preview")
-        st.dataframe(rows, use_container_width=True)
+        st.dataframe(
+            rows,
+            use_container_width=True,
+        )
