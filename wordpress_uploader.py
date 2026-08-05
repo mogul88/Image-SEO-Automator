@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import mimetypes
+import re
 from pathlib import Path
 from typing import Any
 
@@ -9,40 +10,41 @@ from requests.auth import HTTPBasicAuth
 
 
 class WordPressUploadError(RuntimeError):
-    """Raised when WordPress authentication, upload, or metadata update fails."""
+    """Safe, user-readable WordPress upload error."""
 
 
 def _clean(value: Any) -> str:
     return str(value or "").strip()
 
 
-def _extract_wp_error(response: requests.Response) -> str:
-    """
-    Return a useful WordPress error message instead of a huge raw traceback.
-    """
+def _plain_text(value: str, limit: int = 600) -> str:
+    value = re.sub(r"<script\b[^>]*>.*?</script>", " ", value, flags=re.I | re.S)
+    value = re.sub(r"<style\b[^>]*>.*?</style>", " ", value, flags=re.I | re.S)
+    value = re.sub(r"<[^>]+>", " ", value)
+    value = re.sub(r"\s+", " ", value).strip()
+    return value[:limit]
+
+
+def _response_error(response: requests.Response) -> str:
     try:
         payload = response.json()
 
         if isinstance(payload, dict):
             code = _clean(payload.get("code"))
-            message = _clean(payload.get("message"))
+            message = _plain_text(_clean(payload.get("message")))
 
-            details = payload.get("data")
-            status = ""
-
-            if isinstance(details, dict):
-                status = _clean(details.get("status"))
+            data = payload.get("data")
+            wp_status = ""
+            if isinstance(data, dict):
+                wp_status = _clean(data.get("status"))
 
             parts = []
-
             if code:
                 parts.append(f"Code: {code}")
-
             if message:
                 parts.append(f"Message: {message}")
-
-            if status:
-                parts.append(f"Status: {status}")
+            if wp_status:
+                parts.append(f"Status: {wp_status}")
 
             if parts:
                 return " | ".join(parts)
@@ -50,43 +52,46 @@ def _extract_wp_error(response: requests.Response) -> str:
     except Exception:
         pass
 
-    fallback = _clean(response.text)
-
-    if fallback:
-        return fallback[:500]
-
-    return f"HTTP {response.status_code}"
+    body = _plain_text(response.text)
+    return body or f"HTTP {response.status_code}"
 
 
-def _raise_for_wordpress_error(
+def _raise_for_wp_error(
     response: requests.Response,
     action: str,
 ) -> None:
     if response.ok:
         return
 
-    details = _extract_wp_error(response)
+    details = _response_error(response)
 
-    if response.status_code == 401:
-        hint = (
+    hints = {
+        400: "WordPress ne upload data reject kiya.",
+        401: (
             "Username ya Application Password incorrect hai. "
-            "WordPress login password nahi, naya Application Password use karo."
-        )
-    elif response.status_code == 403:
-        hint = (
-            "User authenticated ho sakta hai lekin media upload permission nahi hai, "
-            "ya security plugin/Cloudflare REST request block kar raha hai."
-        )
-    elif response.status_code == 404:
-        hint = (
-            "REST API media endpoint nahi mila. Site URL aur /wp-json/ availability check karo."
-        )
-    elif response.status_code == 413:
-        hint = "Image server upload-size limit se bari hai."
-    elif response.status_code == 415:
-        hint = "Server ne image MIME type accept nahi ki."
-    else:
-        hint = "WordPress REST API ne request reject kar di."
+            "Normal WordPress login password use na karein."
+        ),
+        403: (
+            "Security plugin, firewall, Cloudflare, ya user permission "
+            "REST upload ko block kar rahi hai."
+        ),
+        404: (
+            "WordPress REST endpoint nahi mila. Site URL aur permalinks "
+            "check karein."
+        ),
+        413: "File hosting ki upload-size limit se bari hai.",
+        415: "Server ne image MIME type accept nahi ki.",
+        429: "Server rate limit hit ho gayi. Kuch der baad retry karein.",
+        500: "WordPress/hosting par internal server error aaya.",
+        502: "Hosting gateway ne invalid response di.",
+        503: "WordPress/hosting temporary unavailable hai.",
+        504: "Hosting gateway timeout hua.",
+    }
+
+    hint = hints.get(
+        response.status_code,
+        "WordPress REST API ne request reject kar di.",
+    )
 
     raise WordPressUploadError(
         f"{action} failed — HTTP {response.status_code}. "
@@ -94,27 +99,56 @@ def _raise_for_wordpress_error(
     )
 
 
+def _connection_error_message(exc: Exception) -> str:
+    """
+    Return a safe useful connection message without credentials.
+    """
+    name = exc.__class__.__name__
+    message = _plain_text(str(exc), limit=450)
+
+    if isinstance(exc, requests.exceptions.ConnectTimeout):
+        advice = (
+            "WordPress server se connection waqt par establish nahi hua. "
+            "Hosting/firewall ya temporary network issue ho sakta hai."
+        )
+    elif isinstance(exc, requests.exceptions.ReadTimeout):
+        advice = (
+            "WordPress ne upload ka response waqt par nahi diya. "
+            "Hosting slow hai ya image processing request timeout hui."
+        )
+    elif isinstance(exc, requests.exceptions.SSLError):
+        advice = (
+            "Website SSL certificate/HTTPS connection verify nahi hui."
+        )
+    elif isinstance(exc, requests.exceptions.ConnectionError):
+        advice = (
+            "WordPress server ne connection close/refuse kiya. "
+            "Firewall, security plugin, Cloudflare, hosting rule, ya "
+            "temporary server issue check karein."
+        )
+    else:
+        advice = "WordPress se network request complete nahi hui."
+
+    return f"{name}: {message}. {advice}"
+
+
 def test_wordpress_connection(
     site_url: str,
     username: str,
     app_password: str,
-    timeout: int = 30,
+    timeout: int = 45,
 ) -> dict[str, Any]:
     """
-    Test credentials before uploading.
-
-    Returns current authenticated WordPress user data.
+    Test WordPress REST authentication and upload capability.
     """
     site_url = _clean(site_url).rstrip("/")
     username = _clean(username)
     app_password = _clean(app_password).replace(" ", "")
 
     if not site_url:
-        raise ValueError("WordPress Site URL required hai.")
-
+        raise ValueError("WordPress URL required hai.")
     if not username:
         raise ValueError("WordPress username required hai.")
-
     if not app_password:
         raise ValueError("WordPress Application Password required hai.")
 
@@ -126,21 +160,25 @@ def test_wordpress_connection(
             auth=HTTPBasicAuth(username, app_password),
             headers={
                 "Accept": "application/json",
-                "User-Agent": "ImageSEOAutomator/1.0",
+                "User-Agent": "ImageSEOAutomator/2.0",
             },
-            timeout=timeout,
+            timeout=(15, timeout),
+            allow_redirects=True,
         )
     except requests.RequestException as exc:
         raise WordPressUploadError(
-            f"WordPress connection failed: {exc}"
+            "WordPress connection test failed — "
+            + _connection_error_message(exc)
         ) from exc
 
-    _raise_for_wordpress_error(
-        response,
-        "WordPress authentication test",
-    )
+    _raise_for_wp_error(response, "WordPress authentication test")
 
-    return response.json()
+    try:
+        return response.json()
+    except ValueError as exc:
+        raise WordPressUploadError(
+            "WordPress authentication response valid JSON nahi thi."
+        ) from exc
 
 
 def upload_to_wordpress(
@@ -149,136 +187,110 @@ def upload_to_wordpress(
     app_password: str,
     image_path: str | Path,
     metadata: dict[str, Any],
-    timeout: int = 60,
+    timeout: int = 180,
 ) -> tuple[int, str]:
     """
-    Upload one image to WordPress Media Library and update:
-    - title
-    - alt text
-    - caption
-    - description
+    Upload one image and its metadata in one multipart request.
+
+    Multipart upload is generally more compatible with hosting firewalls
+    than sending the file as a raw request body.
 
     Returns:
         (media_id, source_url)
     """
     site_url = _clean(site_url).rstrip("/")
     username = _clean(username)
-
-    # WordPress displays Application Passwords with spaces.
-    # Removing spaces avoids accidental authentication failure.
     app_password = _clean(app_password).replace(" ", "")
-
     image_path = Path(image_path)
 
     if not site_url:
-        raise ValueError("WordPress Site URL required hai.")
-
+        raise ValueError("WordPress URL required hai.")
     if not username:
         raise ValueError("WordPress username required hai.")
-
     if not app_password:
         raise ValueError("WordPress Application Password required hai.")
-
     if not image_path.exists():
-        raise FileNotFoundError(
-            f"Upload image not found: {image_path}"
-        )
-
-    title = _clean(metadata.get("title"))
-    alt_text = _clean(metadata.get("alt"))
-    caption = _clean(metadata.get("caption"))
-    description = _clean(metadata.get("description"))
+        raise FileNotFoundError(f"Upload image not found: {image_path}")
 
     mime_type, _ = mimetypes.guess_type(image_path.name)
-
     if image_path.suffix.lower() == ".webp":
         mime_type = "image/webp"
-
     mime_type = mime_type or "application/octet-stream"
 
-    auth = HTTPBasicAuth(username, app_password)
-    media_endpoint = f"{site_url}/wp-json/wp/v2/media"
+    endpoint = f"{site_url}/wp-json/wp/v2/media"
 
-    upload_headers = {
-        "Content-Disposition": (
-            f'attachment; filename="{image_path.name}"'
-        ),
-        "Content-Type": mime_type,
-        "Accept": "application/json",
-        "User-Agent": "ImageSEOAutomator/1.0",
+    form_data = {
+        "title": _clean(metadata.get("title")),
+        "alt_text": _clean(metadata.get("alt")),
+        "caption": _clean(metadata.get("caption")),
+        "description": _clean(metadata.get("description")),
+        "slug": image_path.stem,
+        "status": "inherit",
     }
 
     try:
         with image_path.open("rb") as image_file:
-            upload_response = requests.post(
-                media_endpoint,
-                headers=upload_headers,
-                data=image_file,
-                auth=auth,
-                timeout=timeout,
+            response = requests.post(
+                endpoint,
+                auth=HTTPBasicAuth(username, app_password),
+                headers={
+                    "Accept": "application/json",
+                    "User-Agent": "ImageSEOAutomator/2.0",
+                },
+                files={
+                    "file": (
+                        image_path.name,
+                        image_file,
+                        mime_type,
+                    )
+                },
+                data=form_data,
+                timeout=(20, timeout),
+                allow_redirects=True,
             )
     except requests.RequestException as exc:
         raise WordPressUploadError(
-            f"Image upload connection failed: {exc}"
+            f"Image upload connection failed for {image_path.name} — "
+            + _connection_error_message(exc)
         ) from exc
 
-    _raise_for_wordpress_error(
-        upload_response,
+    _raise_for_wp_error(
+        response,
         f"WordPress upload for {image_path.name}",
     )
 
     try:
-        media = upload_response.json()
+        media = response.json()
     except ValueError as exc:
         raise WordPressUploadError(
-            "WordPress upload succeeded but returned invalid JSON."
+            "WordPress upload response valid JSON nahi thi."
         ) from exc
 
     media_id = media.get("id")
+    source_url = _clean(media.get("source_url"))
 
     if not media_id:
         raise WordPressUploadError(
-            "WordPress response mein media ID nahi mila."
+            "Upload response mein WordPress media ID nahi mila."
         )
 
-    update_endpoint = (
-        f"{site_url}/wp-json/wp/v2/media/{media_id}"
-    )
+    if not source_url:
+        # Retrieve the created item once in case source_url was filtered.
+        try:
+            retrieve_response = requests.get(
+                f"{endpoint}/{media_id}",
+                auth=HTTPBasicAuth(username, app_password),
+                headers={
+                    "Accept": "application/json",
+                    "User-Agent": "ImageSEOAutomator/2.0",
+                },
+                timeout=(15, 60),
+            )
+            if retrieve_response.ok:
+                source_url = _clean(
+                    retrieve_response.json().get("source_url")
+                )
+        except Exception:
+            pass
 
-    update_data = {
-        "title": title,
-        "alt_text": alt_text,
-        "caption": caption,
-        "description": description,
-    }
-
-    try:
-        update_response = requests.post(
-            update_endpoint,
-            json=update_data,
-            auth=auth,
-            headers={
-                "Accept": "application/json",
-                "User-Agent": "ImageSEOAutomator/1.0",
-            },
-            timeout=timeout,
-        )
-    except requests.RequestException as exc:
-        raise WordPressUploadError(
-            f"Image uploaded, lekin metadata update connection failed: {exc}"
-        ) from exc
-
-    _raise_for_wordpress_error(
-        update_response,
-        f"Metadata update for media ID {media_id}",
-    )
-
-    updated_media = update_response.json()
-
-    source_url = (
-        updated_media.get("source_url")
-        or media.get("source_url")
-        or ""
-    )
-
-    return int(media_id), _clean(source_url)
+    return int(media_id), source_url
